@@ -1,0 +1,746 @@
+---
+title: "ML2 Classificationin R"
+author: "Shuai Hu & Ting Wei"
+date: "2024"
+output: 
+  html_document:
+    toc: true
+    toc_float:
+      toc_collapsed: true
+    toc_depth: 5
+    number_sections: false
+    theme: readable
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+packages <- c("tidyverse", "MASS", "tree", "caret", "rpart", "rpart.plot", "rattle", "pROC", "here", "e1071", "janitor","randomForest","ranger","xgboost","fastDummies","fastAdaboost","adaStump","gbm","dplyr")
+
+for (pkg in packages) {
+  if (!require(pkg, character.only = TRUE)) {
+    install.packages(pkg)
+    library(pkg, character.only = TRUE)
+  } else {
+    library(pkg, character.only = TRUE)
+  }
+}
+
+#devtools::install_github("nivangio/adaStump")
+#install.packages("https://cran.r-project.org/src/contrib/Archive/fastAdaboost/fastAdaboost_1.0.0.tar.gz", repos = #NULL)
+#install.packages("C:\\R/fastAdaboost_1.0.0.tar.gz", repos = NULL, type = "source")
+
+```
+
+```{r}
+options(scipen=999)
+Sys.setenv(LANG = "en")
+cv3 <- read.csv('C:\\Users\\Lenovo\\OneDrive\\AAA Warsaw University\\The 3rd semester\\Machine Learning 2_new_R\\project\\c3.csv')
+
+glimpse(cv3)
+```
+
+### data cleaning
+
+```{r}
+colSums(is.na(cv3)) %>% 
+  sort()
+
+```
+
+
+There is no NA 
+
+```{r}
+has_na <- apply(cv3, 2, function(x) any(is.na(x)))
+has_na
+# There is no NA 
+
+chr_columns <- sapply(cv3, is.character)
+cv3[, chr_columns] <- lapply(cv3[, chr_columns], as.factor)
+glimpse(cv3)
+chr_columns
+```
+
+```{r}
+unique(cv3$education)
+unique(cv3$marital.status)
+unique(cv3$native.country)
+unique(cv3$occupation)
+unique(cv3$race)
+unique(cv3$relationship)
+unique(cv3$salary)
+unique(cv3$sex)
+unique(cv3$workclass)
+
+```
+
+```{r}
+cv3$education <- factor(cv3$education 
+                                         ,
+                                         # levels from lowest to highest
+                                         levels = c("Preschool",
+                                                    "1st-4th",
+                                                    "5th-6th",
+                                                    "7th-8th",
+                                                    "9th",
+                                                    "10th",
+                                                    "11th",
+                                                    "12th",
+                                                    "HS-grad",
+                                                    "Some-college",
+                                                    "Assoc-acdm",
+                                                    "Assoc-voc",
+                                                    "Bachelors",
+                                                    "Masters",
+                                                    "Prof-school",
+                                                    "Doctorate"),
+                        
+                                         labels = c("Preschool",
+                                                    "1st-4th",
+                                                    "5th-6th",
+                                                    "7th-8th",
+                                                    "9th",
+                                                    "10th",
+                                                    "11th",
+                                                    "12th",
+                                                    "HS-grad",
+                                                    "Some-college",
+                                                    "Assoc-acdm",
+                                                    "Assoc-voc",
+                                                    "Bachelors",
+                                                    "Masters",
+                                                    "Prof-school",
+                                                    "Doctorate"
+                                         ),
+                                         ordered = TRUE)
+
+
+
+cv3$marital.status <- factor(cv3$marital.status 
+                                         ,
+                                         # levels from lowest to highest
+                                         levels = c("Never-married",
+                                                    "Separated",
+                                                    "Married-spouse-absent",
+                                                    "Married-civ-spouse",
+                                                    "Married-AF-spouse",
+                                                    "Divorced",
+                                                    "Widowed"),
+                                         labels = c("Never-married",
+                                                    "Separated",
+                                                    "Married-spouse-absent",
+                                                    "Married-civ-spouse",
+                                                    "Married-AF-spouse",
+                                                    "Divorced",
+                                                    "Widowed"
+                                         ),
+                                         ordered = TRUE)
+```
+
+
+```{r}
+cv3$occupation <- as.character(cv3$occupation)
+cv3$occupation[cv3$occupation == "?"] <- "unknown"
+cv3$occupation[cv3$native.country == "?"] <- "unknown"
+cv3$occupation <- as.factor(cv3$occupation)
+rows_to_remove <- which(cv3$native.country == "Holand-Netherlands")
+cv3 <- cv3[-rows_to_remove, ]
+
+any(is.na(cv3))
+table(cv3$marital.status)
+glimpse(cv3)
+
+chisq.test(table(cv3$salary, cv3$education))
+chisq.test(table(cv3$salary, cv3$education.num))
+ 
+cv3 <- cv3 %>% dplyr::select(-education.num)
+cv3 <- cv3 %>% dplyr::select(-id)
+cv3$salary <- ifelse(cv3$salary == "<=50K", "Less_equal_50K", "More_than_50K")
+cv3$salary <- factor(cv3$salary, levels = c("Less_equal_50K", "More_than_50K"), labels = c("Less_equal_50K", "More_than_50K"))
+#options(contrasts = c("contr.treatment",  # for non-ordinal factors
+```
+
+### Traning sample and test sample
+ 
+```{r}
+set.seed(123456)
+training_cv3 <- createDataPartition(cv3$salary, 
+                                    p = 0.7, 
+                                    list = FALSE) 
+cv3.train <- cv3[training_cv3,]
+cv3.test  <- cv3[-training_cv3,]
+model <- salary ~ .
+```
+
+### Cross-validation
+
+```{r}
+
+tc <- trainControl(method = "cv",
+                   number = 10, 
+                   classProbs = TRUE,
+                   summaryFunction = twoClassSummary)
+
+```
+
+```{r}
+
+
+# Assuming cv3.train is your dataset
+numeric_variables <- cv3.train[, sapply(cv3.train, is.numeric)]
+
+# Perform ANOVA for each numeric variable
+anova_results <- lapply(numeric_variables, function(x) aov(x ~ cv3.train$salary))
+
+# Extract relevant information from ANOVA results
+summary_anova <- lapply(anova_results, summary)
+
+# Display the results
+print(summary_anova)
+
+
+```
+
+
+We can see feat02, feat04, feat06 are import among the all feat variables
+
+
+# Decision tree
+
+## Tree 0 
+
+```{r}
+
+cv3.tree <- 
+  rpart(model, 
+        data =cv3.train, 
+        method = "class") 
+cv3.pred.train.tree  <- predict(cv3.tree,  cv3.train)
+cv3.ROC.train.tree  <- roc(as.numeric(cv3.train$salary== 'Less_equal_50K' ), 
+                            cv3.pred.train.tree[, 1])
+cv3.pred.test.tree  <- predict(cv3.tree, 
+                                cv3.test)
+cv3.ROC.test.tree  <- roc(as.numeric(cv3.test$salary), 
+                           cv3.pred.test.tree[, 1])
+
+cv3.ROC.test.tree
+
+```
+## Tree 2
+
+```{r}
+cv3.tree1 <- 
+  rpart(model, 
+        data =cv3.train, 
+        method = "class",
+        minsplit = 500, 
+        minbucket = 250, #
+         maxdepth = 30,
+        cp = -1) 
+cv3.pred.train.tree1  <- predict(cv3.tree1,  cv3.train)
+cv3.ROC.train.tree1  <- roc(as.numeric(cv3.train$salary== 'Less_equal_50K' ), 
+                            cv3.pred.train.tree1[, 1])
+cv3.pred.test.tree1  <- predict(cv3.tree1, 
+                                cv3.test)
+cv3.ROC.test.tree1  <- roc(as.numeric(cv3.test$salary), 
+                           cv3.pred.test.tree1[, 1])
+
+cv3.ROC.test.tree1
+```
+## Tree 3
+
+```{r}
+cv3.tree2 <- 
+  rpart(model, 
+        data =cv3.train, 
+        method = "class",
+        minsplit = 450, 
+        minbucket = 270, #
+         maxdepth = 30) 
+cv3.pred.train.tree2 <- predict(cv3.tree2,  cv3.train)
+cv3.ROC.train.tree2  <- roc(as.numeric(cv3.train$salary== 'Less_equal_50K' ), 
+                            cv3.pred.train.tree2[, 1])
+cv3.pred.test.tree2  <- predict(cv3.tree2, 
+                                cv3.test)
+cv3.ROC.test.tree2  <- roc(as.numeric(cv3.test$salary), 
+                           cv3.pred.test.tree2[, 1])
+
+cv3.ROC.test.tree2
+```
+
+## Tree 4
+
+```{r}
+
+cp.grid <- expand.grid(cp = seq(0, 0.03, 0.001))
+
+cv3.tree3 <- 
+  train(model,
+        data = cv3.train, 
+        method = "rpart", 
+        metric = "ROC",
+        trControl = tc,
+        tuneGrid  = cp.grid)
+
+# cv3.pred.train.tree3 <- predict(cv3.tree3, 
+#                                 cv3.train)
+# cv3.ROC.train.tree3  <- roc(as.numeric(cv3.train$salary == "Less_equal_50K"), 
+#                             cv3.pred.train.tree3[, 1])
+# 
+# cv3.pred.test.tree3  <- predict(cv3.tree3, 
+#                                 cv3.test)
+# cv3.ROC.test.tree3  <- roc(as.numeric(cv3.test$salary == "Less_equal_50K"), 
+#                            cv3.pred.test.tree3[, 1])
+# 
+# cat("Gini train = ", 2 * cv3.ROC.train.tree3$auc - 1, "\n", sep = "")
+# cat("Gini test  = ", 2 * cv3.ROC.test.tree3$auc - 1,  "\n", sep = "")
+
+
+```
+
+```{r}
+cv3.pred.train.tree3 <- predict(cv3.tree3, 
+                                cv3.train)
+
+cv3.ROC.train.tree3 <- roc(as.numeric(cv3.train$salary == "Less_equal_50K"), 
+                           as.numeric(predict(cv3.tree3, cv3.train, type = "prob")[, "Less_equal_50K"]))
+
+cv3.pred.test.tree3  <- predict(cv3.tree3, 
+                                cv3.test)
+
+cv3.ROC.test.tree3  <- roc(as.numeric(cv3.test$salary == "Less_equal_50K"), 
+                           as.numeric(predict(cv3.tree3, cv3.test, type = "prob")[, "Less_equal_50K"]))
+
+cat("Gini train = ", 2 * cv3.ROC.train.tree3$auc - 1, "\n", sep = "")
+cat("Gini test  = ", 2 * cv3.ROC.test.tree3$auc - 1,  "\n", sep = "")
+
+
+```
+
+
+## AUC plot of decision trees
+
+```{r}
+list(
+  cv3.ROC.train.tree  = cv3.ROC.train.tree,
+  cv3.ROC.test.tree   = cv3.ROC.test.tree,
+  cv3.ROC.train.tree1 = cv3.ROC.train.tree1,
+  cv3.ROC.test.tree1  = cv3.ROC.test.tree1,
+  cv3.ROC.train.tree2 = cv3.ROC.train.tree2,
+  cv3.ROC.test.tree2  = cv3.ROC.test.tree2,
+  cv3.ROC.train.tree3 = cv3.ROC.train.tree3,
+  cv3.ROC.test.tree3  = cv3.ROC.test.tree3
+) %>%
+  pROC::ggroc(alpha = 0.5, linetype = 1, size = 1) +
+  geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1),
+               color = "grey",
+               linetype = "dashed") +
+  labs(subtitle = paste0("Gini TRAIN: ",
+                         "tree0 = ",
+                         round(100*(2 * auc(cv3.ROC.train.tree) - 1), 1), "%, ",
+                         "tree1 = ",
+                         round(100*(2 * auc(cv3.ROC.train.tree1) - 1), 1), "% ",
+                         "tree2 = ",
+                         round(100*(2 * auc(cv3.ROC.train.tree2) - 1), 1), "% ",
+                         "tree3 = ",
+                         round(100*(2 * auc(cv3.ROC.train.tree3) - 1), 1), "% ",
+                         "Gini TEST: ",
+                         "tree0 = ",
+                         round(100*(2 * auc(cv3.ROC.test.tree) - 1), 1), "%, ",
+                         "tree1 = ",
+                         round(100*(2 * auc(cv3.ROC.test.tree1) - 1), 1), "% ",
+                         "tree2 = ",
+                         round(100*(2 * auc(cv3.ROC.test.tree2) - 1), 1), "% ",
+                         "tree3 = ",
+                         round(100*(2 * auc(cv3.ROC.test.tree3) - 1), 1), "% "
+  )) +
+  theme_bw() + coord_fixed() +
+  scale_color_brewer(palette = "Paired")
+
+```
+
+### The best ROC of decision tree is 83.1%.
+
+# Random forest
+
+## Random forest1
+
+```{r}
+cv3.rf <- randomForest(model, 
+                           data = cv3.train)
+
+
+```
+
+## Random forest2
+
+```{r}
+cv3.rf2 <- 
+  randomForest(model,
+               data = cv3.train,
+               ntree = 100,
+               sampsize = nrow(cv3.train),
+               mtry = 8,
+               
+               nodesize = 100,
+               
+               importance = TRUE)
+```
+
+## Random forest3
+
+```{r}
+parameters_rf <- expand.grid(mtry = 2:10)
+ctrl_oob <- trainControl(method = "oob", classProbs = TRUE)
+
+cv3.rf3 <-
+  train(model,
+        data = cv3.train,
+        method = "rf",
+        ntree = 100,
+        nodesize = 100,
+        tuneGrid = parameters_rf,
+        trControl = ctrl_oob,
+        mportance = TRUE)
+```
+
+
+
+```{r}
+parameters_ranger <- 
+  expand.grid(mtry = 4:10,
+              
+              splitrule = "gini",
+             
+              min.node.size = c(100, 250, 500))
+```
+
+
+## Random forest4
+
+```{r}
+cv3.rf4 <- 
+  train(model, 
+        data = cv3.train, 
+        method = "ranger", 
+        num.trees = 100, 
+      
+        num.threads = 3,
+          
+        importance = "impurity",
+         
+        tuneGrid = parameters_ranger, 
+        trControl = tc)
+```
+
+
+```{r}
+cv3.pred.train.rf <- predict(cv3.rf, 
+                             cv3.train, 
+                         type = "prob")[, "Less_equal_50K"]
+
+cv3.ROC.train.rf  <- roc(as.numeric(cv3.train$salary == "Less_equal_50K"), 
+                         cv3.pred.train.rf)
+
+cv3.pred.test.rf  <- predict(cv3.rf, 
+                             cv3.test, 
+                         type = "prob")[, "Less_equal_50K"]
+
+cv3.ROC.test.rf   <- roc(as.numeric(cv3.test$salary == "Less_equal_50K"), 
+                         cv3.pred.test.rf)
+
+cv3.pred.train.rf2 <- predict(cv3.rf2, 
+                              cv3.train, 
+                          type = "prob")[, "Less_equal_50K"]
+cv3.ROC.train.rf2  <- roc(as.numeric(cv3.train$salary == "Less_equal_50K"), 
+                          cv3.pred.train.rf2)
+cv3.pred.test.rf2  <- predict(cv3.rf2, 
+                              cv3.test, 
+                          type = "prob")[, "Less_equal_50K"]
+cv3.ROC.test.rf2   <- roc(as.numeric(cv3.test$salary == "Less_equal_50K"), 
+                          cv3.pred.test.rf2)
+
+cv3.pred.train.rf3 <- predict(cv3.rf3, 
+                              cv3.train, 
+                          type = "prob")[, "Less_equal_50K"]
+cv3.ROC.train.rf3  <- roc(as.numeric(cv3.train$salary == "Less_equal_50K"), 
+                          cv3.pred.train.rf3)
+cv3.pred.test.rf3  <- predict(cv3.rf3, 
+                              cv3.test, 
+                          type = "prob")[, "Less_equal_50K"]
+cv3.ROC.test.rf3   <- roc(as.numeric(cv3.test$salary == "Less_equal_50K"), 
+                          cv3.pred.test.rf3)
+
+cv3.pred.train.rf4 <- predict(cv3.rf4, 
+                               cv3.train, 
+                           type = "prob")[, "Less_equal_50K"]
+cv3.ROC.train.rf4  <- roc(as.numeric(cv3.train$salary == "Less_equal_50K"), 
+                       cv3.pred.train.rf4)
+cv3.pred.test.rf4  <- predict(cv3.rf4, 
+                           cv3.test, 
+                           type = "prob")[, "Less_equal_50K"]
+cv3.ROC.test.rf4   <- roc(as.numeric(cv3.test$salary == "Less_equal_50K"), 
+                       cv3.pred.test.rf4)
+
+
+list(
+  cv3.ROC.train.rf   = cv3.ROC.train.rf,
+  cv3.ROC.test.rf    = cv3.ROC.test.rf,
+  cv3.ROC.train.rf2  = cv3.ROC.train.rf2,
+  cv3.ROC.test.rf2   = cv3.ROC.test.rf2,
+  cv3.ROC.train.rf3  = cv3.ROC.train.rf3,
+  cv3.ROC.test.rf3   = cv3.ROC.test.rf3,
+  cv3.ROC.train.rf4 = cv3.ROC.train.rf4,
+  cv3.ROC.test.rf4  = cv3.ROC.test.rf4
+) %>%
+  pROC::ggroc(alpha = 0.5, linetype = 1, size = 1) + 
+  geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), 
+               color = "grey", 
+               linetype = "dashed") +
+  labs(title = paste0("Gini TEST: ",
+                      "rf = ", 
+                      round(100 * (2 * auc(cv3.ROC.test.rf) - 1), 1), "%, ",
+                      "rf2 = ", 
+                      round(100 * (2 * auc(cv3.ROC.test.rf2) - 1), 1), "%, ",
+                      "rf3 = ", 
+                      round(100 * (2 * auc(cv3.ROC.test.rf3) - 1), 1), "%, ",
+                      "rf4 = ", 
+                      round(100 * (2 * auc(cv3.ROC.test.rf4) - 1), 1), "% "),
+       subtitle =  paste0("Gini TRAIN: ",
+                          "rf = ", 
+                          round(100 * (2 * auc(cv3.ROC.train.rf) - 1), 1), "%, ",
+                          "rf2 = ", 
+                          round(100 * (2 * auc(cv3.ROC.train.rf2) - 1), 1), "%, ",
+                          "rf3 = ", 
+                          round(100 * (2 * auc(cv3.ROC.train.rf3) - 1), 1), "%, ",
+                          "rf4 = ", 
+                          round(100 * (2 * auc(cv3.ROC.train.rf4) - 1), 1), "% ")) +
+  theme_bw() + coord_fixed() +
+  scale_color_brewer(palette = "Paired")
+
+```
+
+### The best ROC of the random forest is 87.9%.
+
+# XGboost
+
+## XGboost1
+
+```{r}
+
+parameters_xgb <- expand.grid(nrounds = seq(20, 150, 5),
+                              max_depth = c(8),
+                              eta = c(0.25), 
+                              gamma = 1,
+                              colsample_bytree = c(0.2),
+                              min_child_weight = c(150),
+                              subsample = 0.85)
+
+ctrl_cv5 <- trainControl(method = "cv", 
+                         number = 5,
+                         classProbs = TRUE,
+                         summaryFunction = twoClassSummary)
+
+
+cv3.xgb <- train(model,
+                     data = cv3.train,
+                     method = "xgbTree",
+                     trControl = ctrl_cv5,
+                     tuneGrid  = parameters_xgb)
+cv3.xgb
+```
+
+## XGboost2
+
+```{r}
+parameters_xgb2 <- expand.grid(nrounds = 110,
+                               max_depth = c(8),
+                               eta = c(0.25), 
+                               gamma = 1,
+                               colsample_bytree = c(0.2),
+                               min_child_weight = c(150),
+                               subsample = seq(0.4, 0.9, 0.05))
+
+
+cv3.xgb2 <- train(model,
+                      data = cv3.train,
+                      method = "xgbTree",
+                      trControl = ctrl_cv5,
+                      tuneGrid  = parameters_xgb2)
+
+cv3.xgb2
+```
+
+### The best subsample is 0.9.
+
+## XGboost3
+
+```{r}
+parameters_xgb3 <- expand.grid(nrounds = 110,
+                               max_depth = 8,
+                               eta = c(0.25), 
+                               gamma = 1,
+                               colsample_bytree = seq(0.1, 0.8, 0.1),
+                               min_child_weight = 150,
+                               subsample = 0.9)
+
+cv3.xgb3 <- train(model,
+                      data = cv3.train,
+                      method = "xgbTree",
+                      trControl = ctrl_cv5,
+                      tuneGrid  = parameters_xgb3)
+cv3.xgb3
+```
+
+### The best colsample_bytree is 0.2
+
+## XGboost4
+
+```{r}
+
+parameters_xgb4 <- expand.grid(nrounds = 110,
+                               max_depth = 5,
+                               eta = c(0.25), 
+                               gamma = seq(0.05,0.4,0.05),
+                               colsample_bytree = 0.2,
+                               min_child_weight = 40,
+                               subsample = c(0.9))
+
+
+cv3.xgb4 <- train(model,
+                      data = cv3.train,
+                      method = "xgbTree",
+                      trControl = ctrl_cv5,
+                      tuneGrid  = parameters_xgb4)
+cv3.xgb4
+```
+
+
+### The best gamma is 0.2.
+
+## XGboost5
+
+```{r}
+parameters_xgb5 <- expand.grid(nrounds = 110,
+                               max_depth = 5,
+                               eta = c(0.25), 
+                               gamma = 0.2,
+                               colsample_bytree = 0.2,
+                               min_child_weight = 40,
+                               subsample = c(0.9))
+
+
+cv3.xgb5 <- train(model,
+                  data = cv3.train,
+                  method = "xgbTree",
+                  trControl = ctrl_cv5,
+                  tuneGrid  = parameters_xgb5)
+
+cv3.xgb5
+
+```
+
+
+```{r, warning=FALSE}
+ROC.train5 <- pROC::roc(cv3.train$salary, 
+                       predict(cv3.xgb5,
+                               cv3.train, type = "prob")[, "Less_equal_50K"])
+ROC.test5  <- pROC::roc(cv3.test$salary, 
+                       predict(cv3.xgb5,
+                               cv3.test, type = "prob")[, "Less_equal_50K"])
+```
+
+
+
+```{r}
+list(
+  XGboost.train  = ROC.train5,
+  XGboost.test   = ROC.test5
+) %>%
+  pROC::ggroc(alpha = 0.5, linetype = 1, size = 1) + 
+  geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), 
+               color = "grey", 
+               linetype = "dashed") +
+  labs(subtitle = paste0("ROC TRAIN dataset: ",
+                         "XGboost =",
+                         round(auc(ROC.train5), 3), ", ",
+                         "ROC TEST dataset: ",
+                         "XGboost =",
+                         round(auc(ROC.test5), 3)
+  )) +
+  theme_bw() + coord_fixed() +
+  scale_color_brewer(palette = "Paired")
+```
+
+
+
+
+# Comparison with the best model of each algorithm.
+
+```{r}
+list(
+  Decision_tree.train  = cv3.ROC.train.tree1,
+  Decision_tree.test   = cv3.ROC.test.tree1,
+  Random_forest.train  = cv3.ROC.train.rf,
+  Random_forest.test   = cv3.ROC.test.rf,
+  XGboost.train  = ROC.train5,
+  XGboost.test   = ROC.test5
+) %>%
+  pROC::ggroc(alpha = 0.5, linetype = 1, size = 1) + 
+  geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), 
+               color = "grey", 
+               linetype = "dashed") +
+  labs(subtitle = paste0("ROC TRAIN dataset: ",
+                         "Decision tree = ", 
+                         round(auc(cv3.ROC.train.tree), 3), ", ",
+                         "Random forest =",
+                         round(auc(cv3.ROC.train.rf), 3), ", ",
+                         "XGboost =",
+                         round(auc(ROC.train5), 3), ", ",
+                         "\n",
+                         "ROC TEST dataset: ",
+                         "Decision tree = ", 
+                         round(auc(cv3.ROC.test.tree), 3), ", ",
+                         "Random forest = ", 
+                         round(auc(cv3.ROC.test.rf), 3), ", ",
+                         "XGboost =",
+                         round(auc(ROC.test5), 3)
+  )) +
+  theme_bw() + coord_fixed() +
+  scale_color_brewer(palette = "Paired")
+```
+
+
+```{r}
+
+
+final_model <- cv3.xgb5$finalModel
+
+
+importance <- xgb.importance(model = final_model)
+
+
+top_features <- importance[1:20, ]
+
+
+print(top_features)
+
+xgb.plot.importance(importance_matrix = top_features)
+
+```
+
+
+
+# Summary
+
+## The decision tree has the lowest AUC 83%, and the random forest AUC is 94%, but the train set is overfitted. The best Predictive model is XGboost which has an AUC of 94%. We can see that feat04,feat06, and feat02 those created by Professor are quite important for the model.
+
+
+
+
+
+
+
